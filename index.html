@@ -723,22 +723,89 @@ function setSyncStatus(status, msg) {
   txt.textContent = msg;
 }
 
+// ══════════════════════════════════════════
+// SUPABASE CONFIG
+// ══════════════════════════════════════════
+const SUPA_URL = 'https://zdveynidmwvplxfgtoyj.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpkdmV5bmlkbXd2cGx4Zmd0b3lqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyNDQ0MTksImV4cCI6MjA5NDgyMDQxOX0.0RUbrgcabbIvIGPriwJElWfN3j-fihBJd8ynxWpFpr8';
+
+const supaH = {
+  'Content-Type': 'application/json',
+  'Authorization': 'Bearer ' + SUPA_KEY,
+  'apikey': SUPA_KEY,
+};
+
+async function supaGet(table, query='') {
+  const r = await fetch(SUPA_URL+'/rest/v1/'+table+'?'+query, {headers:{...supaH,'Prefer':''}});
+  return r.ok ? await r.json() : [];
+}
+async function supaUpsert(table, data) {
+  await fetch(SUPA_URL+'/rest/v1/'+table, {
+    method:'POST', headers:{...supaH,'Prefer':'resolution=merge-duplicates,return=minimal'},
+    body: JSON.stringify(data)
+  });
+}
+async function supaDelete(table, id) {
+  await fetch(SUPA_URL+'/rest/v1/'+table+'?id=eq.'+encodeURIComponent(id), {
+    method:'DELETE', headers: supaH
+  });
+}
+async function supaUpdate(table, id, data) {
+  await fetch(SUPA_URL+'/rest/v1/'+table+'?id=eq.'+encodeURIComponent(id), {
+    method:'PATCH', headers: supaH, body: JSON.stringify(data)
+  });
+}
+
+// tx → Supabase row
+function txToRow(tx) {
+  return {
+    id: tx.id, date: tx.date, type: tx.type,
+    category: tx.cat || tx.category || '',
+    amount: tx.amount || 0,
+    description: tx.desc || tx.description || '',
+    note: tx.note || '',
+    payment_status: tx.paymentStatus || 'odendi',
+    created_by: tx.userId || '',
+    created_by_name: tx.user || '',
+    created_at: (tx.date||'')+' '+(tx.time||''),
+    ts: tx.ts || Date.now()
+  };
+}
+// Supabase row → tx
+function rowToTx(r) {
+  return {
+    id: r.id, date: r.date, type: r.type,
+    cat: r.category, category: r.category,
+    amount: r.amount,
+    desc: r.description, description: r.description,
+    note: r.note || '',
+    paymentStatus: r.payment_status || 'odendi',
+    userId: r.created_by, user: r.created_by_name,
+    time: r.created_at ? r.created_at.split(' ')[1] || '' : '',
+    ts: r.ts || 0, photos: [], history: []
+  };
+}
+
 async function syncToSheets() {
   if (isSyncing) return;
   isSyncing = true;
   setSyncStatus('syncing', 'Kaydediliyor...');
   try {
-    const payload = JSON.stringify({txs, users, templates, reminders, version:7, date:new Date().toISOString()});
-    const resp = await fetch(GS_URL, {method:'POST', body:payload});
-    const data = await resp.json();
-    if (data.ok) {
-      setSyncStatus('ok', '✓ Google Sheets ile senkronize');
-      localStorage.setItem('bk_last_sync', new Date().toISOString());
-    } else {
-      setSyncStatus('error', '⚠ Senkronizasyon hatası');
+    // Tüm txs'i Supabase'e yaz
+    if (txs.length > 0) {
+      const rows = txs.map(txToRow);
+      // 50'şer batch
+      for (let i = 0; i < rows.length; i += 50) {
+        await supaUpsert('transactions', rows.slice(i, i+50));
+      }
     }
+    // Kullanıcıları yaz
+    const urows = users.map(u => ({id:u.id,name:u.name,role:u.role||'personel',pass:u.pass||'',color:u.color||'#888'}));
+    await supaUpsert('kasa_users', urows);
+    setSyncStatus('ok', '✓ Supabase ile senkronize');
+    localStorage.setItem('bk_last_sync', new Date().toISOString());
   } catch(e) {
-    setSyncStatus('error', '⚠ İnternet bağlantısı yok — yerel kayıt');
+    setSyncStatus('error', '⚠ Senkronizasyon hatası');
   }
   isSyncing = false;
 }
@@ -746,20 +813,23 @@ async function syncToSheets() {
 async function loadFromSheets() {
   setSyncStatus('syncing', 'Yükleniyor...');
   try {
-    const resp = await fetch(GS_URL + '?t=' + Date.now());
-    const text = await resp.text();
-    const data = JSON.parse(text);
-    if (data && data.txs) {
-      txs = data.txs || [];
-      if (data.users && data.users.length) users = data.users;
-      templates = data.templates || [];
-      reminders = data.reminders || [];
-      saveLocal();
-      setSyncStatus('ok', '✓ Google Sheets\'ten yüklendi');
-      return true;
+    // İşlemleri çek
+    const rows = await supaGet('transactions', 'order=ts.asc');
+    if (Array.isArray(rows) && rows.length > 0) {
+      txs = rows.map(rowToTx);
     }
-    setSyncStatus('ok', '✓ Google Sheets ile senkronize');
-    return false;
+    // Kullanıcıları çek
+    const urows = await supaGet('kasa_users', '');
+    if (Array.isArray(urows) && urows.length > 0) {
+      users = urows.map(r => ({
+        id: r.id, name: r.name, role: r.role || 'personel',
+        pass: r.pass || '', color: r.color || '#888',
+        perms: ROLE_PERMS[r.role] || ROLE_PERMS.personel
+      }));
+    }
+    saveLocal();
+    setSyncStatus('ok', '✓ Supabase\'ten yüklendi');
+    return true;
   } catch(e) {
     setSyncStatus('error', '⚠ Çevrimdışı — yerel veriler kullanılıyor');
     return false;
@@ -1385,7 +1455,8 @@ function submitTx(){
     ts:now.getTime(),userId:curUser.id,user:curUser.name,
     photos:[...curPhotos],history:[]
   };
-  txs.push(tx);saveTx();
+  txs.push(tx);saveLocal();
+  supaUpsert('transactions', txToRow(tx)).catch(()=>{});
   logAct('add',(curType==='income'?'Gelir':'Gider')+' eklendi: '+desc+' — '+fp(amount));
   curDate=new Date(date+'T12:00:00');
   if(activeTab!=='daily')switchTab('daily');
@@ -1438,7 +1509,9 @@ function saveEdit(){
   t.amount=na;t.date=document.getElementById('eDate').value||t.date;
   t.desc=nd;t.reminder=document.getElementById('eReminder').value.trim();
   t.note=document.getElementById('eNote')?.value.trim()||'';
-  saveTx();logAct('edit','Düzenlendi: '+nd+' — '+fp(na));
+  saveTx();
+  supaUpsert('transactions', txToRow(t)).catch(()=>{});
+  logAct('edit','Düzenlendi: '+nd+' — '+fp(na));
   renderAll();closeSheet('editOverlay');showToast('✅ Güncellendi');
 }
 function deleteTx(id){
@@ -1446,7 +1519,10 @@ function deleteTx(id){
   if(!confirm('Bu işlemi silmek istiyor musun?'))return;
   const t=txs.find(x=>x.id===id);
   logAct('delete','Silindi: '+(t?t.desc:id));
-  txs=txs.filter(t=>t.id!==id);saveTx();renderAll();showToast('Silindi');
+  txs=txs.filter(t=>t.id!==id);
+  saveLocal();
+  supaDelete('transactions',id).catch(()=>{});
+  renderAll();showToast('Silindi');
 }
 
 // ══════════════════════════════════════════
