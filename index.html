@@ -974,6 +974,7 @@ function doLogin(){
   if(!u.role)u.role=u.isAdmin?'yonetim':'personel';
   if(!u.perms)u.perms={...ROLE_PERMS[u.role]||ROLE_PERMS.personel};
   curUser=u;
+  sessionStorage.setItem('bk_uid', u.id);
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('mainApp').style.display='flex';
   document.getElementById('topUserDot').style.background=u.color;
@@ -983,12 +984,12 @@ function doLogin(){
   const dark=localStorage.getItem('biass_dark')==='1';
   if(dark){document.documentElement.setAttribute('data-theme','dark');document.getElementById('darkTog').checked=true;}
   const logo=localStorage.getItem('biass_logo');if(logo)applyLogo(logo);
-  // Load from Sheets then render
   loadFromSheets().then(()=>{buildDD();renderAll();renderReminders();});
   logAct('login','Giriş yapıldı');
 }
 function doLogout(){
   if(curUser)logAct('logout','Çıkış yapıldı');
+  sessionStorage.removeItem('bk_uid');
   document.getElementById('mainApp').style.display='none';
   document.getElementById('loginScreen').style.display='flex';
   curUser=null;buildDD();
@@ -1804,6 +1805,27 @@ loadLocal();
 buildDD();
 applyLogo(BIASS_LOGO);
 initDarkMode();
+
+// Sayfa yenilenince oturumu koru
+window.addEventListener('load', async ()=>{
+  const uid = sessionStorage.getItem('bk_uid');
+  if(uid && !curUser){
+    // Önce Supabase'den kullanıcıları çek
+    await loadFromSheets();
+    const u = users.find(x=>x.id===uid);
+    if(u){
+      curUser=u;
+      document.getElementById('loginScreen').style.display='none';
+      document.getElementById('mainApp').style.display='flex';
+      document.getElementById('topUserDot').style.background=u.color;
+      document.getElementById('topUserName').textContent=u.name;
+      document.querySelectorAll('.role-yonetim').forEach(el=>el.style.display=isYonetim()?'flex':'none');
+      document.querySelectorAll('.role-yonetici').forEach(el=>el.style.display=(u.role==='yonetici'||isYonetim())?'flex':'none');
+      const logo=localStorage.getItem('biass_logo');if(logo)applyLogo(logo);
+      buildDD();renderAll();renderReminders();
+    }
+  }
+});
 </script>
 </body>
 </html>
