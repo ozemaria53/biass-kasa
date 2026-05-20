@@ -1802,16 +1802,28 @@ if('serviceWorker' in navigator){
 // INIT
 // ══════════════════════════════════════════
 loadLocal();
-buildDD();
 applyLogo(BIASS_LOGO);
 initDarkMode();
 
-// Sayfa yenilenince oturumu koru
-window.addEventListener('load', async ()=>{
+// Önce Supabase'den kullanıcıları çek, sonra dropdown'ı doldur
+(async ()=>{
   const uid = sessionStorage.getItem('bk_uid');
-  if(uid && !curUser){
-    // Önce Supabase'den kullanıcıları çek
-    await loadFromSheets();
+  try {
+    const urows = await supaGet('kasa_users','');
+    if(Array.isArray(urows) && urows.length > 0){
+      users = urows.map(r=>({
+        id:r.id, name:r.name, role:r.role||'personel',
+        pass:r.pass||'', color:r.color||'#888',
+        perms: ROLE_PERMS[r.role]||ROLE_PERMS.personel
+      }));
+      if(!users.find(u=>u.role==='yonetim'))
+        users.unshift({id:'admin',name:'Yönetim',pass:ADMIN_PASS,color:'#1a2e6e',role:'yonetim',perms:{...ROLE_PERMS.yonetim}});
+    }
+  } catch(e){}
+  buildDD();
+
+  // Oturum varsa direkt giriş yap
+  if(uid){
     const u = users.find(x=>x.id===uid);
     if(u){
       curUser=u;
@@ -1822,10 +1834,10 @@ window.addEventListener('load', async ()=>{
       document.querySelectorAll('.role-yonetim').forEach(el=>el.style.display=isYonetim()?'flex':'none');
       document.querySelectorAll('.role-yonetici').forEach(el=>el.style.display=(u.role==='yonetici'||isYonetim())?'flex':'none');
       const logo=localStorage.getItem('biass_logo');if(logo)applyLogo(logo);
-      buildDD();renderAll();renderReminders();
+      loadFromSheets().then(()=>{buildDD();renderAll();renderReminders();});
     }
   }
-});
+})();
 </script>
 </body>
 </html>
