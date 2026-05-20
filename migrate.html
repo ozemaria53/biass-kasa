@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Kasa Data Aktarım</title>
+<style>
+body{font-family:Helvetica,Arial,sans-serif;max-width:600px;margin:2rem auto;padding:1rem;background:#0f172a;color:#fff;}
+h1{font-size:1.4rem;margin-bottom:1rem;}
+.btn{background:#3b82f6;color:white;border:none;border-radius:10px;padding:.9rem 1.5rem;font-size:1rem;font-weight:700;cursor:pointer;width:100%;margin-bottom:.8rem;}
+.btn.green{background:#22c55e;}
+.btn.red{background:#ef4444;}
+.log{background:#1e293b;border-radius:10px;padding:1rem;font-size:.85rem;line-height:1.8;min-height:200px;white-space:pre-wrap;margin-top:.8rem;color:#94a3b8;}
+.status{padding:.6rem 1rem;border-radius:8px;margin-bottom:.6rem;font-weight:700;}
+.ok{background:#064e3b;color:#6ee7b7;}
+.err{background:#7f1d1d;color:#fca5a5;}
+.info{background:#1e3a5f;color:#7dd3fc;}
+</style>
+</head>
+<body>
+<h1>📦 Kasa → Supabase Aktarım</h1>
+<div id="status"></div>
+<button class="btn" onclick="startMigration()">🚀 Aktarımı Başlat</button>
+<div class="log" id="log">Başlatmak için butona basın...</div>
+
+<script>
+const GS_URL = 'https://script.google.com/macros/s/AKfycbybwgvT4AwCaYrzKHe3i5XaHt8FsQz9ZGpkrT3iqGqWSWfNjb3hyG5rLEk1lWZNOPUm_A/exec';
+const SUPA_URL = 'https://zdveynidmwvplxfgtoyj.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpkdmV5bmlkbXd2cGx4Zmd0b3lqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyNDQ0MTksImV4cCI6MjA5NDgyMDQxOX0.0RUbrgcabbIvIGPriwJElWfN3j-fihBJd8ynxWpFpr8';
+
+const headers = {
+  'Content-Type': 'application/json',
+  'Authorization': 'Bearer ' + SUPA_KEY,
+  'apikey': SUPA_KEY,
+  'Prefer': 'resolution=merge-duplicates,return=minimal'
+};
+
+function log(msg, type='info') {
+  const el = document.getElementById('log');
+  el.textContent += '\n' + msg;
+  el.scrollTop = el.scrollHeight;
+}
+
+function setStatus(msg, type) {
+  document.getElementById('status').innerHTML =
+    `<div class="status ${type}">${msg}</div>`;
+}
+
+async function startMigration() {
+  document.getElementById('log').textContent = '';
+  setStatus('⏳ Veri çekiliyor...', 'info');
+  log('Google Sheets\'ten veri çekiliyor...');
+
+  try {
+    // 1. Sheets'ten veri çek
+    const r = await fetch(GS_URL + '?t=' + Date.now());
+    const text = await r.text();
+    const data = JSON.parse(text);
+
+    log('✅ Sheets\'ten veri alındı');
+
+    const txList = data.transactions || data.txList || [];
+    const userList = data.users || [];
+
+    log(`📊 ${txList.length} işlem, ${userList.length} kullanıcı bulundu`);
+
+    // 2. İşlemleri aktar
+    if (txList.length > 0) {
+      setStatus('⏳ İşlemler aktarılıyor...', 'info');
+      log('\n--- İŞLEMLER AKTARILIYOR ---');
+
+      // 50'şer batch
+      const batchSize = 50;
+      let success = 0;
+      for (let i = 0; i < txList.length; i += batchSize) {
+        const batch = txList.slice(i, i + batchSize);
+        const rows = batch.map(tx => ({
+          id: tx.id || ('tx-' + Date.now() + '-' + i),
+          date: tx.date || '',
+          type: tx.type || '',
+          category: tx.category || '',
+          amount: parseFloat(tx.amount) || 0,
+          description: tx.description || tx.desc || '',
+          note: tx.note || '',
+          payment_status: tx.paymentStatus || tx.payment_status || 'odendi',
+          created_by: tx.createdBy || tx.created_by || '',
+          created_by_name: tx.createdByName || tx.created_by_name || '',
+          created_at: tx.createdAt || tx.created_at || '',
+          ts: tx.ts || Date.now(),
+        }));
+
+        const res = await fetch(SUPA_URL + '/rest/v1/transactions', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(rows)
+        });
+
+        if (res.ok) {
+          success += batch.length;
+          log(`✅ ${i+1}-${Math.min(i+batchSize, txList.length)} arası aktarıldı`);
+        } else {
+          const err = await res.text();
+          log(`❌ Hata (${i+1}-${i+batchSize}): ${err}`);
+        }
+      }
+      log(`\n✅ Toplam ${success}/${txList.length} işlem aktarıldı`);
+    }
+
+    // 3. Kullanıcıları aktar
+    if (userList.length > 0) {
+      setStatus('⏳ Kullanıcılar aktarılıyor...', 'info');
+      log('\n--- KULLANICILAR AKTARILIYOR ---');
+
+      const rows = userList.map(u => ({
+        id: u.id || u.name,
+        name: u.name || '',
+        role: u.role || 'personel',
+        pass: u.pass || u.password || '',
+        color: u.color || '#888',
+      }));
+
+      const res = await fetch(SUPA_URL + '/rest/v1/kasa_users', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(rows)
+      });
+
+      if (res.ok) {
+        log(`✅ ${userList.length} kullanıcı aktarıldı`);
+      } else {
+        const err = await res.text();
+        log(`❌ Kullanıcı hatası: ${err}`);
+      }
+    }
+
+    setStatus('✅ Aktarım tamamlandı!', 'ok');
+    log('\n🎉 Tüm veriler Supabase\'e aktarıldı!');
+    log('Supabase → Table Editor → transactions tablosunu kontrol edin.');
+
+  } catch(e) {
+    setStatus('❌ Hata: ' + e.message, 'err');
+    log('HATA: ' + e.message);
+  }
+}
+</script>
+</body>
+</html>
