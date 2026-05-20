@@ -340,6 +340,13 @@ canvas{display:block;width:100%!important}
 
 ::-webkit-scrollbar{width:4px}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.rem-chip{padding:.5rem 1rem;border:2px solid var(--border);border-radius:10px;font-family:var(--font);font-size:.88rem;font-weight:700;cursor:pointer;background:var(--card2);color:var(--text2);}
+.rem-chip.active{border-color:var(--orange);background:var(--orange-bg);color:var(--orange);}
+.rem-card{background:var(--card);border-radius:14px;border:1.5px solid var(--orange);padding:.85rem 1rem;margin:.4rem .8rem;display:flex;align-items:flex-start;gap:.7rem;}
+.rem-info{flex:1;}
+.rem-title{font-size:1rem;font-weight:700;color:var(--text);}
+.rem-sub{font-size:.78rem;color:var(--text3);margin-top:2px;}
+.rem-dismiss{background:var(--red-bg);color:var(--red);border:none;border-radius:8px;padding:4px 10px;font-family:var(--font);font-size:.8rem;font-weight:700;cursor:pointer;}
 </style>
 </head>
 <body>
@@ -637,8 +644,18 @@ canvas{display:block;width:100%!important}
   <div class="sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-hdr"><div class="sheet-title">🔔 Hatırlatıcı Ekle</div><button class="sheet-close" onclick="closeSheet('reminderOverlay')">✕</button></div>
-    <div class="f-section"><label class="f-lbl">Başlık</label><div class="f-card"><div class="f-row"><span class="f-ico">📝</span><input type="text" id="remTitle" placeholder="Ör: Kira ödemesi, SGK..."></div></div></div>
+    <div class="f-section"><label class="f-lbl">Başlık</label><div class="f-card"><div class="f-row"><span class="f-ico">📝</span><input type="text" id="remTitle" placeholder="Ör: Kira ödemesi, SGK, İnternet..."></div></div></div>
+    <div class="f-section"><label class="f-lbl">Tutar (opsiyonel)</label><div class="f-card"><div class="f-row"><span class="f-ico">💰</span><input type="number" id="remAmount" placeholder="0.00" min="0"></div></div></div>
     <div class="f-section"><label class="f-lbl">Tarih</label><div class="f-card"><div class="f-row"><span class="f-ico">📅</span><input type="date" id="remDate"></div></div></div>
+    <div class="f-section"><label class="f-lbl">Saat</label><div class="f-card"><div class="f-row"><span class="f-ico">🕐</span><input type="time" id="remTime" value="09:00"></div></div></div>
+    <div class="f-section"><label class="f-lbl">Tekrar</label>
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap;padding:.5rem 0;">
+        <button class="rem-chip active" data-val="once" onclick="selectRepeat(this)">Bir Kez</button>
+        <button class="rem-chip" data-val="weekly" onclick="selectRepeat(this)">Her Hafta</button>
+        <button class="rem-chip" data-val="monthly" onclick="selectRepeat(this)">Her Ay</button>
+        <button class="rem-chip" data-val="yearly" onclick="selectRepeat(this)">Her Yıl</button>
+      </div>
+    </div>
     <button class="submit-btn orange" onclick="saveReminder()">🔔 Kaydet</button>
   </div>
 </div>
@@ -813,7 +830,7 @@ async function syncToSheets() {
 async function loadFromSheets() {
   setSyncStatus('syncing', 'Yükleniyor...');
   try {
-    // İşlemleri çek
+    // Load from Supabase
     const rows = await supaGet('transactions', 'order=ts.asc');
     if (Array.isArray(rows) && rows.length > 0) {
       txs = rows.map(rowToTx);
@@ -825,6 +842,15 @@ async function loadFromSheets() {
         id: r.id, name: r.name, role: r.role || 'personel',
         pass: r.pass || '', color: r.color || '#888',
         perms: ROLE_PERMS[r.role] || ROLE_PERMS.personel
+      }));
+    }
+    // Hatırlatıcıları çek
+    const rrows = await supaGet('reminders', 'active=eq.true&order=date.asc');
+    if (Array.isArray(rrows) && rrows.length > 0) {
+      reminders = rrows.map(r=>({
+        id:r.id, title:r.title, amount:r.amount||0,
+        date:r.date, time:r.time||'09:00',
+        repeat_type:r.repeat_type||'once', active:r.active
       }));
     }
     saveLocal();
@@ -984,7 +1010,7 @@ function doLogin(){
   const dark=localStorage.getItem('biass_dark')==='1';
   if(dark){document.documentElement.setAttribute('data-theme','dark');document.getElementById('darkTog').checked=true;}
   const logo=localStorage.getItem('biass_logo');if(logo)applyLogo(logo);
-  loadFromSheets().then(()=>{buildDD();renderAll();renderReminders();});
+  loadFromSheets().then(()=>{buildDD();renderAll();renderReminders();startReminderCheck();});
   logAct('login','Giriş yapıldı');
 }
 function doLogout(){
@@ -1552,16 +1578,64 @@ function deleteTpl(id){templates=templates.filter(t=>t.id!==id);saveTpl();render
 // ══════════════════════════════════════════
 // REMINDERS
 // ══════════════════════════════════════════
-function openAddReminder(){closeSheet('settingsOverlay');document.getElementById('remTitle').value='';document.getElementById('remDate').value=todayKey();showSheet('reminderOverlay');}
+function selectRepeat(btn){
+  document.querySelectorAll('.rem-chip').forEach(c=>c.classList.remove('active'));
+  btn.classList.add('active');
+}
+function openAddReminder(){
+  closeSheet('settingsOverlay');
+  document.getElementById('remTitle').value='';
+  if(document.getElementById('remAmount'))document.getElementById('remAmount').value='';
+  document.getElementById('remDate').value=todayKey();
+  if(document.getElementById('remTime'))document.getElementById('remTime').value='09:00';
+  document.querySelectorAll('.rem-chip').forEach((c,i)=>c.classList.toggle('active',i===0));
+  showSheet('reminderOverlay');
+}
 function saveReminder(){
   const title=document.getElementById('remTitle').value.trim();
-  const date=document.getElementById('remDate').value;
   if(!title){showToast('⚠ Başlık giriniz');return;}
+  const date=document.getElementById('remDate').value;
   if(!date){showToast('⚠ Tarih seçiniz');return;}
-  reminders.push({id:'r'+Date.now(),title,date});
-  saveRem();renderReminders();closeSheet('reminderOverlay');showToast('🔔 Hatırlatıcı kaydedildi');
+  const time=document.getElementById('remTime')?.value||'09:00';
+  const amount=parseFloat(document.getElementById('remAmount')?.value)||0;
+  const repeat=document.querySelector('.rem-chip.active')?.dataset.val||'once';
+  const rem={id:'r'+Date.now(),title,amount,date,time,repeat_type:repeat,active:true,created_by:curUser?curUser.id:'admin'};
+  reminders.push(rem);
+  saveRem();
+  supaUpsert('reminders',rem).catch(()=>{});
+  renderReminders();closeSheet('reminderOverlay');showToast('🔔 Hatırlatıcı kaydedildi');
 }
-function dismissReminder(id){reminders=reminders.filter(r=>r.id!==id);saveRem();renderReminders();}
+function dismissReminder(id){
+  const rem=reminders.find(r=>r.id===id);
+  if(rem&&rem.repeat_type&&rem.repeat_type!=='once'){
+    const d=new Date(rem.date+'T12:00:00');
+    if(rem.repeat_type==='weekly')d.setDate(d.getDate()+7);
+    else if(rem.repeat_type==='monthly')d.setMonth(d.getMonth()+1);
+    else if(rem.repeat_type==='yearly')d.setFullYear(d.getFullYear()+1);
+    rem.date=d.toISOString().slice(0,10);
+    saveRem();supaUpsert('reminders',rem).catch(()=>{});
+  }else{
+    reminders=reminders.filter(r=>r.id!==id);
+    saveRem();supaDelete('reminders',id).catch(()=>{});
+  }
+  renderReminders();
+}
+function startReminderCheck(){
+  checkReminders();
+  setInterval(checkReminders,60000);
+}
+function checkReminders(){
+  const today=todayKey();
+  const now=new Date();
+  const ct=now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
+  reminders.filter(r=>r.active!==false&&r.date===today&&(r.time||'09:00')===ct).forEach(r=>{
+    showToast('🔔 '+r.title+(r.amount>0?' — '+fp(r.amount):''));
+    if(Notification&&Notification.permission==='granted'){
+      new Notification('Biass Kasa — Hatırlatıcı',{body:r.title+(r.amount>0?' — '+fp(r.amount):''),icon:'./icon-192.png'});
+    }
+  });
+  renderReminders();
+}
 
 // ══════════════════════════════════════════
 // USER MGMT
