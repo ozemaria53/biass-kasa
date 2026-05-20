@@ -1011,6 +1011,7 @@ function doLogin(){
   if(dark){document.documentElement.setAttribute('data-theme','dark');document.getElementById('darkTog').checked=true;}
   const logo=localStorage.getItem('biass_logo');if(logo)applyLogo(logo);
   loadFromSheets().then(()=>{buildDD();renderAll();renderReminders();startReminderCheck();});
+  initPushNotifications();
   logAct('login','Giriş yapıldı');
 }
 function doLogout(){
@@ -1867,6 +1868,36 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&document.getElementById('txOverlay').classList.contains('show'))submitTx();
   if(e.key==='Enter'&&document.getElementById('editOverlay').classList.contains('show'))saveEdit();
 });
+
+// ══════════════════════════════════════════
+// CAPACITOR PUSH NOTIFICATIONS
+// ══════════════════════════════════════════
+async function initPushNotifications(){
+  if(!window.Capacitor||!window.Capacitor.isNativePlatform())return;
+  try{
+    const {PushNotifications}=window.Capacitor.Plugins;
+    if(!PushNotifications)return;
+
+    const perm=await PushNotifications.requestPermissions();
+    if(perm.receive!=='granted')return;
+
+    await PushNotifications.register();
+
+    PushNotifications.addListener('registration',async token=>{
+      if(!curUser)return;
+      await supaUpdate('kasa_users',curUser.id,{fcm_token:token.value});
+    });
+
+    PushNotifications.addListener('pushNotificationReceived',notif=>{
+      showToast('🔔 '+notif.title+(notif.body?' — '+notif.body:''));
+    });
+
+    PushNotifications.addListener('pushNotificationActionPerformed',()=>{
+      switchTab('daily');
+    });
+
+  }catch(e){console.warn('Push init error:',e);}
+}
 
 // ══════════════════════════════════════════
 // PWA
