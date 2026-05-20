@@ -59,7 +59,7 @@ async function startMigration() {
 
     log('✅ Sheets\'ten veri alındı');
 
-    const txList = data.transactions || data.txList || [];
+    const txList = data.txs || data.transactions || [];
     const userList = data.users || [];
 
     log(`📊 ${txList.length} işlem, ${userList.length} kullanıcı bulundu`);
@@ -78,14 +78,14 @@ async function startMigration() {
           id: tx.id || ('tx-' + Date.now() + '-' + i),
           date: tx.date || '',
           type: tx.type || '',
-          category: tx.category || '',
+          category: tx.cat || tx.category || '',
           amount: parseFloat(tx.amount) || 0,
-          description: tx.description || tx.desc || '',
+          description: tx.desc || tx.description || '',
           note: tx.note || '',
           payment_status: tx.paymentStatus || tx.payment_status || 'odendi',
-          created_by: tx.createdBy || tx.created_by || '',
-          created_by_name: tx.createdByName || tx.created_by_name || '',
-          created_at: tx.createdAt || tx.created_at || '',
+          created_by: tx.userId || tx.createdBy || '',
+          created_by_name: tx.user || tx.createdByName || '',
+          created_at: (tx.date||'') + ' ' + (tx.time||''),
           ts: tx.ts || Date.now(),
         }));
 
@@ -117,7 +117,7 @@ async function startMigration() {
         role: u.role || 'personel',
         pass: u.pass || u.password || '',
         color: u.color || '#888',
-      }));
+      })).filter(u => u.id);
 
       const res = await fetch(SUPA_URL + '/rest/v1/kasa_users', {
         method: 'POST',
